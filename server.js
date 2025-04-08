@@ -1,45 +1,29 @@
 import express from "express";
-import * as glide from "@glideapps/tables";
-import dotenv from "dotenv";
+import axios from "axios";
 
-dotenv.config();
 const app = express();
 app.use(express.json());
 
-// ✅ Glide Table Configuration
-const iaqualinkPoolsTable = glide.table({
-  token: process.env.GLIDE_API_KEY,
-  app: "zD98BIk5qPhXwwPS4Esr",
-  table: "native-table-2IJjrKBt704CS15j4s8N",
-  columns: {
-    systemId: { type: "string", name: "System ID" },
-    systemName: { type: "string", name: "System Name" },
-    status: { type: "string", name: "Status" },
-    airTemp: { type: "string", name: "Air Temp" },
-    poolTemp: { type: "string", name: "Pool Temp" },
-    spaTemp: { type: "string", name: "Spa Temp" },
-    poolHeaterStatus: { type: "string", name: "Pool Heater Status" },
-    spaHeaterStatus: { type: "string", name: "Spa Heater Status" },
-    filterPumpStatus: { type: "string", name: "Filter Pump Status" },
-    spaPumpStatus: { type: "string", name: "Spa Pump Status" },
-    currentPoolSetTemp: { type: "string", name: "Current Pool Set Temp" },
-    currentSpaSetTemp: { type: "string", name: "Current Spa Set Temp" },
-    lastUpdated: { type: "string", name: "Last Updated" },
-    username: { type: "string", name: "Username" },
-    ...Object.fromEntries(
-      Array.from({ length: 19 }, (_, i) => [
-        `aux${i + 1}Status`,
-        { type: "string", name: `Aux ${i + 1} Status` }
-      ])
-    )
+// ✅ CONFIG
+const GLIDE_API_TOKEN = "0214a9af-5147-4d64-a9c9-7eb72fc7f967";
+const APP_ID = "zD98BIk5qPhXwwPS4Esr";
+const TABLE_ID = "native-table-2IJjrKBt704CS15j4s8N";
+const BASE_URL = `https://api.glideapp.io/api/functionality/apps/${APP_ID}/tables/${TABLE_ID}`;
+
+// ✅ Axios instance with auth
+const glide = axios.create({
+  baseURL: BASE_URL,
+  headers: {
+    Authorization: `Bearer ${GLIDE_API_TOKEN}`,
+    "Content-Type": "application/json"
   }
 });
 
-// ✅ /ingest Endpoint
+// ✅ /ingest endpoint
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
-  // Handle Glide wrapping JSON in a string under "body"
+  // Handle Glide's "body" string wrapper
   if (typeof req.body.body === "string") {
     try {
       parsed = JSON.parse(req.body.body);
@@ -49,17 +33,16 @@ app.post("/ingest", async (req, res) => {
   }
 
   const { data, username } = parsed;
-
   if (!data || typeof data !== "object") {
     return res.status(400).send({ error: "Missing or invalid pool data" });
   }
 
   try {
-    // 🔁 Get all existing rows in the Glide Table
-    const existingRows = await iaqualinkPoolsTable.list();
-
+    // 🔁 Process each pool
     for (const [systemId, info] of Object.entries(data)) {
       const d = info.devices || {};
+
+      // Map AUX fields
       const aux = Object.fromEntries(
         Array.from({ length: 19 }, (_, i) => [
           `aux${i + 1}Status`,
@@ -67,7 +50,7 @@ app.post("/ingest", async (req, res) => {
         ])
       );
 
-      const record = {
+      const rowData = {
         systemId,
         systemName: info.name || "",
         status: info.status || "",
@@ -85,24 +68,28 @@ app.post("/ingest", async (req, res) => {
         ...aux
       };
 
-      const existing = existingRows.find(row => row.systemId === systemId);
+      // 🔍 Check for existing row by systemId
+      const existingRes = await glide.get(`/rows?filter=${encodeURIComponent(`systemId=${systemId}`)}`);
+      const existingRow = existingRes.data?.rows?.[0];
 
-      if (existing) {
-        await iaqualinkPoolsTable.update(existing.id, record);
+      if (existingRow) {
+        // 🔁 Update
+        await glide.patch(`/rows/${existingRow.id}`, { values: rowData });
       } else {
-        await iaqualinkPoolsTable.add(record);
+        // ➕ Add new row
+        await glide.post("/rows", { values: rowData });
       }
     }
 
     res.status(200).send({ success: true, message: "Pools synced to Glide!" });
   } catch (err) {
-    console.error("Error syncing pool data:", err);
+    console.error("Error syncing pool data:", err.response?.data || err.message);
     res.status(500).send({ error: err.message });
   }
 });
 
-// ✅ Start the Server
+// ✅ Start Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
