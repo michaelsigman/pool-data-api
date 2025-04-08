@@ -1,12 +1,12 @@
 import express from "express";
-import dotenv from "dotenv";
 import * as glide from "@glideapps/tables";
+import dotenv from "dotenv";
 
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🟩 Your Glide Table config
+// ✅ Configure Glide Table
 const iaqualinkPoolsTable = glide.table({
   token: process.env.GLIDE_API_KEY,
   app: "zD98BIk5qPhXwwPS4Esr",
@@ -26,7 +26,6 @@ const iaqualinkPoolsTable = glide.table({
     currentSpaSetTemp: { type: "string", name: "Current Spa Set Temp" },
     lastUpdated: { type: "string", name: "Last Updated" },
     username: { type: "string", name: "Username" },
-    // AUX fields
     ...Object.fromEntries(
       Array.from({ length: 19 }, (_, i) => [
         `aux${i + 1}Status`,
@@ -36,8 +35,21 @@ const iaqualinkPoolsTable = glide.table({
   }
 });
 
+// ✅ /ingest endpoint
 app.post("/ingest", async (req, res) => {
-  const { data, username } = req.body;
+  let parsed = req.body;
+
+  // ✅ Check if Glide wrapped JSON in a "body" string
+  if (typeof req.body.body === "string") {
+    try {
+      parsed = JSON.parse(req.body.body);
+    } catch (err) {
+      return res.status(400).send({ error: "Invalid JSON inside 'body'" });
+    }
+  }
+
+  const { data, username } = parsed;
+
   if (!data || typeof data !== "object") {
     return res.status(400).send({ error: "Missing or invalid pool data" });
   }
@@ -81,9 +93,9 @@ app.post("/ingest", async (req, res) => {
     res.status(200).send({ success: true, message: "Pools synced to Glide!" });
   } catch (err) {
     console.error("Error syncing pool data:", err);
-    res.status(500).send({ success: false, error: err.message });
+    res.status(500).send({ error: err.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Server listening on port ${PORT}`));
+// ✅ Start server
+const PORT = process.env.PORT
