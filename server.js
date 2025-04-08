@@ -1,6 +1,5 @@
-// server.js
 import express from "express";
-import axios from "axios";
+import * as glide from "@glideapps/tables";
 
 const app = express();
 app.use(express.json());
@@ -8,45 +7,49 @@ app.use(express.json());
 // ✅ CONFIG
 const GLIDE_SECRET_TOKEN = "0214a9af-5147-4d64-a9c9-7eb72fc7f967";
 const APP_ID = "zD98BIk5qPhXwwPS4Esr";
-const TABLE_NAME = "native-table-2IJjrKBt704CS15j4s8N";
-const GLIDE_API_URL = "https://api.glideapp.io/api/function/mutateTables";
+const TABLE_ID = "native-table-2IJjrKBt704CS15j4s8N";
 
-// Fetch existing rows
-let existingSystemIds = new Set();
-const fetchExistingRows = async () => {
-  try {
-    const res = await axios.post(
-      "https://api.glideapp.io/api/function/getTableData",
-      {
-        appID: APP_ID,
-        tableName: TABLE_NAME,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${GLIDE_SECRET_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const rows = res.data.rows || [];
-    rows.forEach((row) => {
-      if (row["System ID"]) {
-        existingSystemIds.add(row["System ID"]);
-      }
-    });
-  } catch (error) {
-    console.error("❌ Error fetching existing rows:", error.response?.data || error.message);
-  }
-};
-
-// ✅ GET route to test server & fetch existing rows
-app.get("/get", async (req, res) => {
-  await fetchExistingRows();
-  res.status(200).send({ systemIds: Array.from(existingSystemIds) });
+const iaqualinkPoolsTable = glide.table({
+  token: GLIDE_SECRET_TOKEN,
+  app: APP_ID,
+  table: TABLE_ID,
+  columns: {
+    systemId: { type: "string", name: "System ID" },
+    systemName: { type: "string", name: "System Name" },
+    status: { type: "string", name: "Status" },
+    airTemp: { type: "string", name: "Air Temp" },
+    poolTemp: { type: "string", name: "Pool Temp" },
+    spaTemp: { type: "string", name: "Spa Temp" },
+    poolHeaterStatus: { type: "string", name: "Pool Heater Status" },
+    spaHeaterStatus: { type: "string", name: "Spa Heater Status" },
+    filterPumpStatus: { type: "string", name: "Filter Pump Status" },
+    spaPumpStatus: { type: "string", name: "Spa Pump Status" },
+    currentPoolSetTemp: { type: "string", name: "Current Pool Set Temp" },
+    currentSpaSetTemp: { type: "string", name: "Current Spa Set Temp" },
+    aux1Status: { type: "string", name: "Aux 1 Status" },
+    aux2Status: { type: "string", name: "Aux 2 Status" },
+    aux3Status: { type: "string", name: "Aux 3 Status" },
+    aux4Status: { type: "string", name: "Aux 4 Status" },
+    aux5Status: { type: "string", name: "Aux 5 Status" },
+    aux6Status: { type: "string", name: "Aux 6 Status" },
+    aux7Status: { type: "string", name: "Aux 7 Status" },
+    aux8Status: { type: "string", name: "Aux 8 Status" },
+    aux9Status: { type: "string", name: "Aux 9 Status" },
+    aux10Status: { type: "string", name: "Aux 10 Status" },
+    aux11Status: { type: "string", name: "Aux 11 Status" },
+    aux12Status: { type: "string", name: "Aux 12 Status" },
+    aux13Status: { type: "string", name: "Aux 13 Status" },
+    aux14Status: { type: "string", name: "Aux 14 Status" },
+    aux15Status: { type: "string", name: "Aux 15 Status" },
+    aux16Status: { type: "string", name: "Aux 16 Status" },
+    aux17Status: { type: "string", name: "Aux 17 Status" },
+    aux18Status: { type: "string", name: "Aux 18 Status" },
+    aux19Status: { type: "string", name: "Aux 19 Status" },
+    lastUpdated: { type: "date-time", name: "Last Updated" },
+    username: { type: "string", name: "Username" },
+  },
 });
 
-// ✅ POST route to ingest pool data
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
@@ -59,78 +62,53 @@ app.post("/ingest", async (req, res) => {
   }
 
   const { data, username } = parsed;
-
   if (!data || typeof data !== "object") {
     return res.status(400).send({ error: "Missing or invalid pool data" });
   }
 
-  // Fetch existing before mutating
-  await fetchExistingRows();
+  try {
+    const existingRows = await iaqualinkPoolsTable.get();
 
-  const mutations = [];
+    for (const [systemId, info] of Object.entries(data)) {
+      const d = info.devices || {};
+      const aux = Object.fromEntries(
+        Array.from({ length: 19 }, (_, i) => [
+          `aux${i + 1}Status`,
+          d[`aux_${i + 1}`] || "0",
+        ])
+      );
 
-  for (const [systemId, info] of Object.entries(data)) {
-    if (existingSystemIds.has(systemId)) {
-      console.log(`⚠️ Skipping existing system ID: ${systemId}`);
-      continue; // Skip adding duplicates
+      const columnValues = {
+        systemId,
+        systemName: info.name || "",
+        status: info.status || "",
+        airTemp: d.air_temp || "",
+        poolTemp: d.pool_temp || "",
+        spaTemp: d.spa_temp || "",
+        poolHeaterStatus: d.pool_heater || "",
+        spaHeaterStatus: d.spa_heater || "",
+        filterPumpStatus: d.pool_pump || "",
+        spaPumpStatus: d.spa_pump || "",
+        currentPoolSetTemp: d.pool_set_point || "",
+        currentSpaSetTemp: d.spa_set_point || "",
+        lastUpdated: new Date().toISOString(),
+        username: username || "",
+        ...aux,
+      };
+
+      const match = existingRows.find((row) => row.systemId === systemId);
+
+      if (match) {
+        await iaqualinkPoolsTable.update(match.id, columnValues);
+      } else {
+        await iaqualinkPoolsTable.add(columnValues);
+      }
     }
 
-    const d = info.devices || {};
-    const aux = Object.fromEntries(
-      Array.from({ length: 19 }, (_, i) => [
-        `Aux ${i + 1} Status`,
-        d[`aux_${i + 1}`] || "0",
-      ])
-    );
-
-    const columnValues = {
-      "System ID": systemId,
-      "System Name": info.name || "",
-      "Status": info.status || "",
-      "Air Temp": d.air_temp || "",
-      "Pool Temp": d.pool_temp || "",
-      "Spa Temp": d.spa_temp || "",
-      "Pool Heater Status": d.pool_heater || "",
-      "Spa Heater Status": d.spa_heater || "",
-      "Filter Pump Status": d.pool_pump || "",
-      "Spa Pump Status": d.spa_pump || "",
-      "Current Pool Set Temp": d.pool_set_point || "",
-      "Current Spa Set Temp": d.spa_set_point || "",
-      "Last Updated": new Date().toISOString(),
-      "Username": username || "",
-      ...aux,
-    };
-
-    mutations.push({
-      kind: "add-row-to-table",
-      tableName: TABLE_NAME,
-      columnValues,
-    });
-  }
-
-  if (!mutations.length) {
-    return res.status(200).send({ message: "No new rows to add." });
-  }
-
-  try {
-    const response = await axios.post(
-      GLIDE_API_URL,
-      {
-        appID: APP_ID,
-        mutations,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${GLIDE_SECRET_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    res.status(200).send({ success: true, added: mutations.length });
-  } catch (error) {
-    console.error("❌ Error posting to Glide:", error.response?.data || error.message);
-    res.status(500).send({ error: error.message });
+    res.status(200).send({ success: true });
+  } catch (err) {
+    console.error("❌ Error syncing:", err);
+    res.status(500).send({ error: err.message });
   }
 });
 
