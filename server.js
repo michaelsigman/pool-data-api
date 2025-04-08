@@ -1,61 +1,52 @@
 import express from "express";
-import dotenv from "dotenv";
-import * as glide from "@glideapps/tables";
+import axios from "axios";
 
-dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Setup table with token + metadata
-const iaqualinkPoolsTable = glide.table({
-  token: process.env.GLIDE_API_TOKEN, // 0214a9af-...
-  app: "zD98BIk5qPhXwwPS4Esr",
-  table: "native-table-2IJjrKBt704CS15j4s8N",
-  columns: {
-    systemId: { type: "string", name: "System ID" },
-    systemName: { type: "string", name: "System Name" },
-    status: { type: "string", name: "Status" },
-    airTemp: { type: "string", name: "Air Temp" },
-    poolTemp: { type: "string", name: "Pool Temp" },
-    spaTemp: { type: "string", name: "Spa Temp" },
-    poolHeaterStatus: { type: "string", name: "Pool Heater Status" },
-    spaHeaterStatus: { type: "string", name: "Spa Heater Status" },
-    filterPumpStatus: { type: "string", name: "Filter Pump Status" },
-    spaPumpStatus: { type: "string", name: "Spa Pump Status" },
-    currentPoolSetTemp: { type: "string", name: "Current Pool Set Temp" },
-    currentSpaSetTemp: { type: "string", name: "Current Spa Set Temp" },
-    aux1Status: { type: "string", name: "Aux 1 Status" },
-    aux2Status: { type: "string", name: "Aux 2 Status" },
-    aux3Status: { type: "string", name: "Aux 3 Status" },
-    aux4Status: { type: "string", name: "Aux 4 Status" },
-    aux5Status: { type: "string", name: "Aux 5 Status" },
-    aux6Status: { type: "string", name: "Aux 6 Status" },
-    aux7Status: { type: "string", name: "Aux 7 Status" },
-    aux8Status: { type: "string", name: "Aux 8 Status" },
-    aux9Status: { type: "string", name: "Aux 9 Status" },
-    aux10Status: { type: "string", name: "Aux 10 Status" },
-    aux11Status: { type: "string", name: "Aux 11 Status" },
-    aux12Status: { type: "string", name: "Aux 12 Status" },
-    aux13Status: { type: "string", name: "Aux 13 Status" },
-    aux14Status: { type: "string", name: "Aux 14 Status" },
-    aux15Status: { type: "string", name: "Aux 15 Status" },
-    aux16Status: { type: "string", name: "Aux 16 Status" },
-    aux17Status: { type: "string", name: "Aux 17 Status" },
-    aux18Status: { type: "string", name: "Aux 18 Status" },
-    aux19Status: { type: "string", name: "Aux 19 Status" },
-    lastUpdated: { type: "date-time", name: "Last Updated" },
-    username: { type: "string", name: "Username" }
-  }
-});
+// ✅ CONFIG
+const GLIDE_SECRET_TOKEN = "0214a9af-5147-4d64-a9c9-7eb72fc7f967";
+const APP_ID = "zD98BIk5qPhXwwPS4Esr";
+const TABLE_NAME = "native-table-2IJjrKBt704CS15j4s8N";
+const GLIDE_API_URL = "https://api.glideapp.io/api/function/mutateTables";
+const GLIDE_LIST_URL = `https://api.glideapp.io/api/function/listTables`;
 
-// POST /ingest
+// 🔄 Utility to fetch existing rows from Glide
+async function getExistingRows() {
+  try {
+    const response = await axios.post(
+      GLIDE_LIST_URL,
+      {
+        appID: APP_ID,
+        queries: [
+          {
+            tableName: TABLE_NAME,
+            filters: []
+          }
+        ]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${GLIDE_SECRET_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    const rows = response.data?.data?.[0]?.rows || [];
+    return rows;
+  } catch (err) {
+    console.error("❌ Error fetching existing rows:", err.response?.data || err.message);
+    return [];
+  }
+}
+
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
-  // If Glide is sending 'body' as a stringified JSON
-  if (typeof req.body.body === "string") {
+  if (typeof parsed.body === "string") {
     try {
-      parsed = JSON.parse(req.body.body);
+      parsed = JSON.parse(parsed.body);
     } catch (err) {
       return res.status(400).send({ error: "Invalid JSON in 'body'" });
     }
@@ -63,57 +54,76 @@ app.post("/ingest", async (req, res) => {
 
   const { data, username } = parsed;
   if (!data || typeof data !== "object") {
-    return res.status(400).send({ error: "Missing or invalid 'data'" });
+    return res.status(400).send({ error: "Missing or invalid pool data" });
+  }
+
+  const existingRows = await getExistingRows();
+  const mutations = [];
+
+  for (const [systemId, info] of Object.entries(data)) {
+    const d = info.devices || {};
+    const aux = Object.fromEntries(
+      Array.from({ length: 19 }, (_, i) => [
+        `Aux ${i + 1} Status`,
+        d[`aux_${i + 1}`] || "0"
+      ])
+    );
+
+    const columnValues = {
+      "System ID": systemId,
+      "System Name": info.name || "",
+      "Status": info.status || "",
+      "Air Temp": d.air_temp || "",
+      "Pool Temp": d.pool_temp || "",
+      "Spa Temp": d.spa_temp || "",
+      "Pool Heater Status": d.pool_heater || "",
+      "Spa Heater Status": d.spa_heater || "",
+      "Filter Pump Status": d.pool_pump || "",
+      "Spa Pump Status": d.spa_pump || "",
+      "Current Pool Set Temp": d.pool_set_point || "",
+      "Current Spa Set Temp": d.spa_set_point || "",
+      "Last Updated": new Date().toISOString(),
+      "Username": username || "",
+      ...aux
+    };
+
+    const existingRow = existingRows.find(row => row["System ID"] === systemId);
+
+    if (existingRow) {
+      mutations.push({
+        kind: "update-row",
+        tableName: TABLE_NAME,
+        columnValues,
+        rowID: existingRow["🆔"]
+      });
+    } else {
+      mutations.push({
+        kind: "add-row-to-table",
+        tableName: TABLE_NAME,
+        columnValues
+      });
+    }
   }
 
   try {
-    const existingRows = await iaqualinkPoolsTable.get();
-
-    let added = 0;
-    let updated = 0;
-
-    for (const [systemId, info] of Object.entries(data)) {
-      const d = info.devices || {};
-      const aux = Object.fromEntries(
-        Array.from({ length: 19 }, (_, i) => [
-          `aux${i + 1}Status`,
-          d[`aux_${i + 1}`] || "0"
-        ])
-      );
-
-      const rowData = {
-        systemId,
-        systemName: info.name || "",
-        status: info.status || "",
-        airTemp: d.air_temp || "",
-        poolTemp: d.pool_temp || "",
-        spaTemp: d.spa_temp || "",
-        poolHeaterStatus: d.pool_heater || "",
-        spaHeaterStatus: d.spa_heater || "",
-        filterPumpStatus: d.pool_pump || "",
-        spaPumpStatus: d.spa_pump || "",
-        currentPoolSetTemp: d.pool_set_point || "",
-        currentSpaSetTemp: d.spa_set_point || "",
-        lastUpdated: new Date().toISOString(),
-        username: username || "",
-        ...aux
-      };
-
-      const existing = existingRows.find((r) => r.systemId === systemId);
-
-      if (existing) {
-        await iaqualinkPoolsTable.update(existing.id, rowData);
-        updated++;
-      } else {
-        await iaqualinkPoolsTable.add(rowData);
-        added++;
+    const response = await axios.post(
+      GLIDE_API_URL,
+      {
+        appID: APP_ID,
+        mutations
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${GLIDE_SECRET_TOKEN}`,
+          "Content-Type": "application/json"
+        }
       }
-    }
+    );
 
-    res.status(200).json({ added, updated });
-  } catch (err) {
-    console.error("❌ Error:", err.message);
-    res.status(500).send({ error: err.message });
+    res.status(200).send({ success: true, total: mutations.length });
+  } catch (error) {
+    console.error("❌ Error syncing to Glide:", error.response?.data || error.message);
+    res.status(500).send({ error: error.message });
   }
 });
 
