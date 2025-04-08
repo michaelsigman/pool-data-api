@@ -54,7 +54,7 @@ app.post("/ingest", async (req, res) => {
       "Spa Pump Status": d.spa_pump || "",
       "Current Pool Set Temp": d.pool_set_point || "",
       "Current Spa Set Temp": d.spa_set_point || "",
-      "Last Updated": new Date().toLocaleDateString(),
+      "Last Updated": new Date().toLocaleString(),
       "Username": username || "",
       ...aux
     };
