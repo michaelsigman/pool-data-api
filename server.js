@@ -6,7 +6,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// ✅ Configure Glide Table
+// ✅ Glide Table Configuration
 const iaqualinkPoolsTable = glide.table({
   token: process.env.GLIDE_API_KEY,
   app: "zD98BIk5qPhXwwPS4Esr",
@@ -35,16 +35,16 @@ const iaqualinkPoolsTable = glide.table({
   }
 });
 
-// ✅ /ingest endpoint
+// ✅ /ingest Endpoint
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
-  // ✅ Check if Glide wrapped JSON in a "body" string
+  // Handle Glide wrapping JSON in a string under "body"
   if (typeof req.body.body === "string") {
     try {
       parsed = JSON.parse(req.body.body);
     } catch (err) {
-      return res.status(400).send({ error: "Invalid JSON inside 'body'" });
+      return res.status(400).send({ error: "Invalid JSON in 'body'" });
     }
   }
 
@@ -55,6 +55,9 @@ app.post("/ingest", async (req, res) => {
   }
 
   try {
+    // 🔁 Get all existing rows in the Glide Table
+    const existingRows = await iaqualinkPoolsTable.list();
+
     for (const [systemId, info] of Object.entries(data)) {
       const d = info.devices || {};
       const aux = Object.fromEntries(
@@ -82,7 +85,8 @@ app.post("/ingest", async (req, res) => {
         ...aux
       };
 
-      const existing = await iaqualinkPoolsTable.findFirst({ systemId });
+      const existing = existingRows.find(row => row.systemId === systemId);
+
       if (existing) {
         await iaqualinkPoolsTable.update(existing.id, record);
       } else {
@@ -97,7 +101,7 @@ app.post("/ingest", async (req, res) => {
   }
 });
 
-// ✅ Start server
+// ✅ Start the Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server listening on port ${PORT}`);
