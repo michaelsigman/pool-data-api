@@ -4,15 +4,11 @@ import * as glide from "@glideapps/tables";
 const app = express();
 app.use(express.json());
 
-// ✅ CONFIG
-const GLIDE_SECRET_TOKEN = "0214a9af-5147-4d64-a9c9-7eb72fc7f967";
-const APP_ID = "zD98BIk5qPhXwwPS4Esr";
-const TABLE_ID = "native-table-2IJjrKBt704CS15j4s8N";
-
+// ✅ Glide Table Configuration
 const iaqualinkPoolsTable = glide.table({
-  token: GLIDE_SECRET_TOKEN,
-  app: APP_ID,
-  table: TABLE_ID,
+  token: "0214a9af-5147-4d64-a9c9-7eb72fc7f967",
+  app: "zD98BIk5qPhXwwPS4Esr",
+  table: "native-table-2IJjrKBt704CS15j4s8N",
   columns: {
     systemId: { type: "string", name: "System ID" },
     systemName: { type: "string", name: "System Name" },
@@ -46,10 +42,11 @@ const iaqualinkPoolsTable = glide.table({
     aux18Status: { type: "string", name: "Aux 18 Status" },
     aux19Status: { type: "string", name: "Aux 19 Status" },
     lastUpdated: { type: "date-time", name: "Last Updated" },
-    username: { type: "string", name: "Username" },
-  },
+    username: { type: "string", name: "Username" }
+  }
 });
 
+// ✅ POST /ingest route
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
@@ -62,6 +59,7 @@ app.post("/ingest", async (req, res) => {
   }
 
   const { data, username } = parsed;
+
   if (!data || typeof data !== "object") {
     return res.status(400).send({ error: "Missing or invalid pool data" });
   }
@@ -69,12 +67,15 @@ app.post("/ingest", async (req, res) => {
   try {
     const existingRows = await iaqualinkPoolsTable.get();
 
+    let updated = 0;
+    let added = 0;
+
     for (const [systemId, info] of Object.entries(data)) {
       const d = info.devices || {};
       const aux = Object.fromEntries(
         Array.from({ length: 19 }, (_, i) => [
           `aux${i + 1}Status`,
-          d[`aux_${i + 1}`] || "0",
+          d[`aux_${i + 1}`] || "0"
         ])
       );
 
@@ -93,25 +94,28 @@ app.post("/ingest", async (req, res) => {
         currentSpaSetTemp: d.spa_set_point || "",
         lastUpdated: new Date().toISOString(),
         username: username || "",
-        ...aux,
+        ...aux
       };
 
-      const match = existingRows.find((row) => row.systemId === systemId);
+      const existing = existingRows.find(r => r.systemId === systemId);
 
-      if (match) {
-        await iaqualinkPoolsTable.update(match.id, columnValues);
+      if (existing && existing.$rowID) {
+        await iaqualinkPoolsTable.update(existing.$rowID, columnValues);
+        updated++;
       } else {
         await iaqualinkPoolsTable.add(columnValues);
+        added++;
       }
     }
 
-    res.status(200).send({ success: true });
+    res.status(200).send({ success: true, updated, added });
   } catch (err) {
-    console.error("❌ Error syncing:", err);
+    console.error("❌ Error syncing:", err.message || err);
     res.status(500).send({ error: err.message });
   }
 });
 
+// ✅ Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
