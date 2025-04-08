@@ -8,9 +8,9 @@ app.use(express.json());
 const GLIDE_API_TOKEN = "0214a9af-5147-4d64-a9c9-7eb72fc7f967";
 const APP_ID = "zD98BIk5qPhXwwPS4Esr";
 const TABLE_ID = "native-table-2IJjrKBt704CS15j4s8N";
-const BASE_URL = `https://api.glideapp.io/api/functionality/apps/${APP_ID}/tables/${TABLE_ID}`;
+const BASE_URL = `https://api.glideapp.io/api/data/${APP_ID}/tables/${TABLE_ID}`;
 
-// ✅ Axios instance with auth
+// ✅ Axios instance with correct base + auth
 const glide = axios.create({
   baseURL: BASE_URL,
   headers: {
@@ -23,7 +23,7 @@ const glide = axios.create({
 app.post("/ingest", async (req, res) => {
   let parsed = req.body;
 
-  // Handle Glide's "body" string wrapper
+  // Handle Glide wrapping payload in a string
   if (typeof req.body.body === "string") {
     try {
       parsed = JSON.parse(req.body.body);
@@ -33,16 +33,17 @@ app.post("/ingest", async (req, res) => {
   }
 
   const { data, username } = parsed;
+
   if (!data || typeof data !== "object") {
     return res.status(400).send({ error: "Missing or invalid pool data" });
   }
 
   try {
-    // 🔁 Process each pool
+    // 🔁 Loop through all pools
     for (const [systemId, info] of Object.entries(data)) {
       const d = info.devices || {};
 
-      // Map AUX fields
+      // Build aux fields dynamically
       const aux = Object.fromEntries(
         Array.from({ length: 19 }, (_, i) => [
           `aux${i + 1}Status`,
@@ -50,7 +51,7 @@ app.post("/ingest", async (req, res) => {
         ])
       );
 
-      const rowData = {
+      const record = {
         systemId,
         systemName: info.name || "",
         status: info.status || "",
@@ -68,16 +69,17 @@ app.post("/ingest", async (req, res) => {
         ...aux
       };
 
-      // 🔍 Check for existing row by systemId
-      const existingRes = await glide.get(`/rows?filter=${encodeURIComponent(`systemId=${systemId}`)}`);
-      const existingRow = existingRes.data?.rows?.[0];
+      // 🔍 Check if row with systemId exists
+      const filterUrl = `/rows?filterBy=data.systemId=${systemId}`;
+      const existingRes = await glide.get(filterUrl);
+      const existing = existingRes.data?.[0];
 
-      if (existingRow) {
-        // 🔁 Update
-        await glide.patch(`/rows/${existingRow.id}`, { values: rowData });
+      if (existing) {
+        // ✅ Update existing row
+        await glide.patch(`/rows/${existing.id}`, { data: record });
       } else {
         // ➕ Add new row
-        await glide.post("/rows", { values: rowData });
+        await glide.post(`/rows`, { data: record });
       }
     }
 
@@ -88,7 +90,7 @@ app.post("/ingest", async (req, res) => {
   }
 });
 
-// ✅ Start Server
+// ✅ Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
